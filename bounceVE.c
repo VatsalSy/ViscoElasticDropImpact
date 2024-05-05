@@ -13,7 +13,7 @@
 #define FILTERED
 #include "two-phase.h"
 #include "navier-stokes/conserving.h"
-#include "log-conform-ViscoElastic_v6.h"
+// #include "log-conform-ViscoElastic_v6.h" // VE part
 #include "tension.h"
 
 // error tolerances
@@ -37,7 +37,7 @@ double tmax, We, Ohd, Ohs, Ec, De, Bo, Ldomain;
 #define MINlevel 2                                            // maximum level
 #define tsnap (0.01)
 
-scalar Gpd[], lambdav[]; // VE part
+// scalar Gpd[], lambdav[]; // VE part
 
 int main(int argc, char const *argv[]) {
 
@@ -56,7 +56,7 @@ int main(int argc, char const *argv[]) {
   
   Ldomain = 4.0; // size of domain. must keep Ldomain \gg 1
 
-  Ec = 0.0; De = 0.0; // VE part
+  // Ec = 0.0; De = 0.0; // VE part
   
   fprintf(ferr, "Level %d tmax %g. We %g, Ohd %3.2e, Ohs %3.2e, Ec %g, De %g, Lo %g\n", MAXlevel, tmax, We, Ohd, Ohs, Ec, De, Ldomain);
 
@@ -72,19 +72,19 @@ int main(int argc, char const *argv[]) {
   rho2 = Rho21; mu2 = Ohs/sqrt(We);
   f.sigma = 1.0/We;
 
-  // polymers
-  Gp = Gpd; // VE part
-  lambda = lambdav; // VE part
+  // // polymers
+  // Gp = Gpd; // VE part
+  // lambda = lambdav; // VE part
 
   run();
 }
 
-event properties (i++) { // VE part
-  foreach () {
-    Gpd[] = (f[] < 1e-6) ? 0.0: Ec/We; //clamp(f[],0.,1.)*Ec; //(f[] > 1.-1e-6) ? Ec: 0.0;
-    lambdav[] =  (f[] < 1e-6) ? 0.0: sqrt(We)*De; //clamp(f[],0.,1.)*De; //(f[] > 1.-1e-6) ? De: 0.0;
-  }
-}
+// event properties (i++) { // VE part
+//   foreach () {
+//     Gpd[] = (f[] < 1e-6) ? 0.0: Ec/We; //clamp(f[],0.,1.)*Ec; //(f[] > 1.-1e-6) ? Ec: 0.0;
+//     lambdav[] =  (f[] < 1e-6) ? 0.0: sqrt(We)*De; //clamp(f[],0.,1.)*De; //(f[] > 1.-1e-6) ? De: 0.0;
+//   }
+// }
 
 event init(t = 0){
   if(!restore (file = "dump")){
@@ -100,10 +100,15 @@ event init(t = 0){
 scalar KAPPA[];
 event adapt(i++) {
   curvature(f, KAPPA);
-  adapt_wavelet ((scalar *){f, u.x, u.y, KAPPA, conform_p.x.x, conform_p.x.y, conform_p.y.y, conform_qq},
-    (double[]){fErr, VelErr, VelErr, KErr, AErr, AErr, AErr, AErr},
+  // adapt_wavelet ((scalar *){f, u.x, u.y, KAPPA, conform_p.x.x, conform_p.x.y, conform_p.y.y, conform_qq},
+  //   (double[]){fErr, VelErr, VelErr, KErr, AErr, AErr, AErr, AErr},
+  //   MAXlevel, MAXlevel-4); // VE part
+
+  adapt_wavelet ((scalar *){f, u.x, u.y, KAPPA},
+    (double[]){fErr, VelErr, VelErr, KErr},
     MAXlevel, MAXlevel-4);
   //unrefine(x>150.0);
+
 }
 
 // Outputs
