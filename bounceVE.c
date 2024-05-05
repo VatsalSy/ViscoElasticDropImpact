@@ -13,16 +13,14 @@
 #define FILTERED
 #include "two-phase.h"
 #include "navier-stokes/conserving.h"
-#include "log-conform.h"
+#include "log-conform-ViscoElastic_v6.h"
 #include "tension.h"
-#include "adapt_wavelet_limited_v2.h"
 
-// Error tolerances
-#define fErr (1e-3)                                 // error tolerance in VOF
-#define KErr (1e-6)                                 // error tolerance in KAPPA
-#define VelErr (1e-2)                            // error tolerances in velocity
-#define DissErr (1e-5)                            // error tolerances in dissipation
-#define OmegaErr (1e-2)                            // error tolerances in vorticity
+// error tolerances
+#define fErr (1e-3)
+#define VelErr (1e-3)
+#define KErr (1e-3)
+#define AErr (1e-3)
 
 // air-water
 #define Rho21 (1e-3)
@@ -38,22 +36,27 @@ int MAXlevel;
 double tmax, We, Ohd, Ohs, Ec, De, Bo, Ldomain;
 #define MINlevel 2                                            // maximum level
 #define tsnap (0.01)
-scalar mupd[], lam[];
+
+scalar Gpd[], lambdav[]; // VE part
 
 int main(int argc, char const *argv[]) {
-  if (argc < 8){
-    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n",8-argc);
-    return 1;
-  }
 
-  MAXlevel = 12;
-  tmax = 7.0;
-  We = 25.0; // We is 1 for 0.22 m/s <1250*0.22^2*0.001/0.06>
-  Ohd = 5e-3; // <\mu/sqrt(1250*0.060*0.001)>
-  Ohs = 5e-5; //\mu_r * Ohd
-  Ldomain = 8.0; // size of domain. must keep Ldomain \gg 1
-  Ec = 0.0;
-  De = 0.0;
+  // if (argc < 8){
+  //   fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n",8-argc);
+  //   return 1;
+  // }
+
+  MAXlevel = 10;
+  We = 20.0; // We is 1 for 0.22 m/s <1250*0.22^2*0.001/0.06>
+  
+  tmax = 0.50;
+
+  Ohd = 1e-2; // <\mu/sqrt(1250*0.060*0.001)>
+  Ohs = 1e-4; //\mu_r * Ohd
+  
+  Ldomain = 4.0; // size of domain. must keep Ldomain \gg 1
+
+  Ec = 0.0; De = 0.0; // VE part
   
   fprintf(ferr, "Level %d tmax %g. We %g, Ohd %3.2e, Ohs %3.2e, Ec %g, De %g, Lo %g\n", MAXlevel, tmax, We, Ohd, Ohs, Ec, De, Ldomain);
 
@@ -70,15 +73,16 @@ int main(int argc, char const *argv[]) {
   f.sigma = 1.0/We;
 
   // polymers
-  mup = mupd, lambda = lam;
+  Gp = Gpd; // VE part
+  lambda = lambdav; // VE part
 
   run();
 }
 
-event properties (i++) {
+event properties (i++) { // VE part
   foreach () {
-    lam[] = sqrt(We)*De*clamp(f[], 0.,1.);
-    mupd[] = De*Ec*clamp(f[], 0.,1.)/sqrt(We);
+    Gpd[] = (f[] < 1e-6) ? 0.0: Ec/We; //clamp(f[],0.,1.)*Ec; //(f[] > 1.-1e-6) ? Ec: 0.0;
+    lambdav[] =  (f[] < 1e-6) ? 0.0: sqrt(We)*De; //clamp(f[],0.,1.)*De; //(f[] > 1.-1e-6) ? De: 0.0;
   }
 }
 
@@ -93,59 +97,49 @@ event init(t = 0){
   }
 }
 
-int refRegion(double x, double y, double z){
-  return ((y < 4.0 && x < 0.01) ? MAXlevel+1: y < 4.0 && x < 4.0 ? MAXlevel: y < 6.0 && x < 6.0 ? MAXlevel-1: y < 6.0 && x < 8.0 ? MAXlevel-2: y < 6.0 && x < 12.0 ? MAXlevel-3: MAXlevel-4);
-}
-
-event adapt(i++){
-  scalar KAPPA[];
+scalar KAPPA[];
+event adapt(i++) {
   curvature(f, KAPPA);
-  scalar D2c[];
-  foreach(){
-    double D11 = (u.y[0,1] - u.y[0,-1])/(2*Delta);
-    double D22 = (u.y[]/max(y,1e-20));
-    double D33 = (u.x[1,0] - u.x[-1,0])/(2*Delta);
-    double D13 = 0.5*( (u.y[1,0] - u.y[-1,0] + u.x[0,1] - u.x[0,-1])/(2*Delta) );
-    double D2 = (sq(D11)+sq(D22)+sq(D33)+2.0*sq(D13));
-    D2c[] = f[]*D2;
-  }
-  adapt_wavelet_limited ((scalar *){f, KAPPA, u.x, u.y, D2c},
-     (double[]){fErr, KErr, VelErr, VelErr, DissErr},
-      refRegion, MINlevel);
+  adapt_wavelet ((scalar *){f, u.x, u.y, KAPPA, conform_p.x.x, conform_p.x.y, conform_p.y.y, conform_qq},
+    (double[]){fErr, VelErr, VelErr, KErr, AErr, AErr, AErr, AErr},
+    MAXlevel, MAXlevel-4);
+  //unrefine(x>150.0);
 }
 
 // Outputs
 // static
-event writingFiles (i = 0, t += tsnap; t <= tmax) {
-  // p.nodump = false; // dump pressure to calculate force in post-processing: see getEpsNForce.c
+event writingFiles (t = 0, t += tsnap; t <= tmax) {
   dump (file = "dump");
   char nameOut[80];
   sprintf (nameOut, "intermediate/snapshot-%5.4f", t);
   dump (file = nameOut);
 }
 
-event logWriting (i+=10) {
-  // boundary((scalar *){f, u.x, u.y, p}); 
-  double ke = 0.;
-  foreach (reduction(+:ke)){
+event logWriting (i++) {
+  double ke = 0., Vcm = 0., vol = 0.;
+  foreach (reduction(+:ke), reduction(+:Vcm)){
     ke += 2*pi*y*(0.5*rho(f[])*(sq(u.x[]) + sq(u.y[])))*sq(Delta);
+    Vcm += 2*pi*y*((f[])*(u.x[]))*sq(Delta);
+    vol += 2*pi*y*(f[])*sq(Delta);
   }
+  Vcm /= vol;
+
   static FILE * fp;
-  if (i == 0) {
-    fprintf (ferr, "i dt t ke p\n");
-    fp = fopen ("log", "w");
-    fprintf(fp, "Level %d tmax %g. We %g, Ohd %3.2e, Ohs %3.2e, Ec %g, De %g, Lo %g\n", MAXlevel, tmax, We, Ohd, Ohs, Ec, De, Ldomain);
-    // fprintf (fp, "i dt t ke p\n");
-    // fprintf (fp, "%d %g %g %g %g\n", i, dt, t, ke, pforce);
-    fprintf (fp, "i dt t ke\n");
-    fprintf (fp, "%d %g %g %g\n", i, dt, t, ke);
-    fclose(fp);
-  } else {
-    fp = fopen ("log", "a");
-    // fprintf (fp, "%d %g %g %g %g\n", i, dt, t, ke, pforce);
-    fprintf (fp, "%d %g %g %g\n", i, dt, t, ke);
-    fclose(fp);
+
+  if (pid() == 0){
+    if (i == 0) {
+      fprintf (ferr, "i dt t ke p\n");
+      fp = fopen ("log", "w");
+      fprintf(fp, "Level %d tmax %g. We %g, Ohd %3.2e, Ohs %3.2e, Ec %g, De %g, Lo %g\n", MAXlevel, tmax, We, Ohd, Ohs, Ec, De, Ldomain);
+      fprintf (fp, "i dt t ke Vcm\n");
+      fprintf (fp, "%d %g %g %g %g\n", i, dt, t, ke, Vcm);
+      fclose(fp);
+    } else {
+      fp = fopen ("log", "a");
+      fprintf (fp, "%d %g %g %g %g\n", i, dt, t, ke, Vcm);
+      fclose(fp);
+    }
+    fprintf (ferr, "%d %g %g %g %g\n", i, dt, t, ke, Vcm);
   }
-  // fprintf (ferr, "%d %g %g %g %g\n", i, dt, t, ke, pforce);
-  fprintf (ferr, "%d %g %g %g\n", i, dt, t, ke);
+
 }

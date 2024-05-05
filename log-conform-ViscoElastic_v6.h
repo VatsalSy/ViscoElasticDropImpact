@@ -1,12 +1,22 @@
+/** Title: log-conform-elastic_v5.h
+# Author: Vatsal Sanjay & Ayush Dixit
+# vatsalsanjay@gmail.com
+# Physics of Fluids
+# Updated: Aug 18, 2023
+*/
+
 // The code is same as http://basilisk.fr/src/log-conform.h but written for purely elastic limit (lambda \to \infty)
 
+// In this code, conform_p, conform_qq are in fact the Conformation tensor. 
+
 (const) scalar Gp = unity;
+(const) scalar lambda = unity;
 
 #include "bcg.h"
 
-symmetric tensor tau_p[];
+symmetric tensor conform_p[], tau_p[];
 #if AXI
-scalar tau_qq[];
+scalar conform_qq[], tau_qq[];
 #endif
 
 event defaults (i = 0) {
@@ -14,30 +24,51 @@ event defaults (i = 0) {
     a = new face vector;
 
   foreach() {
-    foreach_dimension()
+    foreach_dimension(){
       tau_p.x.x[] = 0.;
+      conform_p.x.x[] = 1.;
+    }
     tau_p.x.y[] = 0.;
+    conform_p.x.y[] = 0.;
 #if AXI
     tau_qq[] = 0;
+    conform_qq[] = 1.;
 #endif
   }
 
   for (scalar s in {tau_p}) {
     s.v.x.i = -1; // just a scalar, not the component of a vector
-    foreach_dimension()
+    foreach_dimension(){
       if (s.boundary[left] != periodic_bc) {
-	s[left] = neumann(0);
-	s[right] = neumann(0);
+        s[left] = neumann(0);
+	      s[right] = neumann(0);
       }
+    }
   }
+
+  for (scalar s in {conform_p}) {
+    s.v.x.i = -1; // just a scalar, not the component of a vector
+    foreach_dimension(){
+      if (s.boundary[left] != periodic_bc) {
+        s[left] = neumann(0);
+	      s[right] = neumann(0);
+      }
+    }
+  }
+
 #if AXI
-  scalar s = tau_p.x.y;
-  s[bottom] = dirichlet (0.);  
-#endif  
+  scalar s1 = tau_p.x.y;
+  s1[bottom] = dirichlet (0.);  
+#endif 
+
+#if AXI
+  scalar s2 = conform_p.x.y;
+  s2[bottom] = dirichlet (0.);  
+#endif 
 }
 
 /**
-## Numerical Scheme 
+## Numerical Scheme
 
 The first step is to implement a routine to calculate the eigenvalues
 and eigenvectors of the conformation tensor $\mathbf{A}$.
@@ -100,49 +131,54 @@ $$
 \partial_t \Psi = 2 \mathbf{B} + (\Omega \cdot \Psi -\Psi \cdot \Omega)
 $$
 b) the advection term:
-$$ 
+$$
 \partial_t \Psi + \nabla \cdot (\Psi \mathbf{u}) = 0
+$$
+c) the model term (but set in terms of the conformation 
+tensor $\mathbf{A}$). In an Oldroyd-B viscoelastic fluid, the model is
+$$ 
+\partial_t \mathbf{A} = -\frac{\mathbf{f}_r (\mathbf{A})}{\lambda}
 $$
 
 The implementation below assumes that the values of $\Psi$ and
-$\tau_p$ are never needed simultaneously. This means that $\tau_p$ can
+$\conform_p$ are never needed simultaneously. This means that $\conform_p$ can
 be used to store (temporarily) the values of $\Psi$ (i.e. $\Psi$ is
-just an alias for $\tau_p$). */
+just an alias for $\conform_p$). */
 
-event tracer_advection (i++)
+event tracer_advection(i++)
 {
-  tensor Psi = tau_p;
+    tensor Psi = conform_p;
 #if AXI
-  scalar Psiqq = tau_qq;
+    scalar Psiqq = conform_qq;
 #endif
 
-  /**
-  ### Computation of $\Psi = \log \mathbf{A}$ and upper convective term */
-
-  foreach() {
     /**
-      We assume that the stress tensor $\mathbf{\tau}_p$ depends on the
-      conformation tensor $\mathbf{A}$ as follows
-      $$
-      \mathbf{\tau}_p = G_p (\mathbf{A}) = 
-      G_p (\mathbf{A} - I)
-      $$
+    ### Computation of $\Psi = \log \mathbf{A}$ and upper convective term */
+
+    foreach() {
+      /**
+        We assume that the stress tensor $\mathbf{\tau}_p$ depends on the
+        conformation tensor $\mathbf{A}$ as follows
+        $$
+        \mathbf{\tau}_p = G_p (\mathbf{A}) =
+        G_p (\mathbf{A} - I)
+        $$
       */
 
-      double fa = (Gp[] != 0 ? 1.0/Gp[]: 0.);
+      double fa = (f[] < 1e-6 ? 0.0: 1.0);
 
       pseudo_t A;
-      A.x.y = fa*tau_p.x.y[];
-      foreach_dimension()
-        A.x.x = (fa*tau_p.x.x[] + 1.);
+      A.x.y = fa*conform_p.x.y[];
 
+      foreach_dimension()
+        A.x.x = (fa != 0 ? fa*conform_p.x.x[]: 1.);
       /**
-      In the axisymmetric case, $\Psi_{\theta \theta} = \log A_{\theta
-      \theta}$. Therefore $\Psi_{\theta \theta} = \log [ ( 1 + \text{fa} 
-      \tau_{p_{\theta \theta}})]$. */
+       In the axisymmetric case, $\Psi_{\theta \theta} = \log A_{\theta
+       \theta}$. Therefore $\Psi_{\theta \theta} = \log [ ( 1 + \text{fa}
+       \tau_{p_{\theta \theta}})]$. */
 
 #if AXI
-      double Aqq = (1. + fa*tau_qq[]);
+      double Aqq = (fa != 0 ? fa*conform_qq[]: 1.); 
       Psiqq[] = log (Aqq); 
 #endif
 
@@ -161,16 +197,16 @@ event tracer_advection (i++)
       
       Psi.x.y[] = R.x.x*R.y.x*log(Lambda.x) + R.y.y*R.x.y*log(Lambda.y);
       foreach_dimension()
-	Psi.x.x[] = sq(R.x.x)*log(Lambda.x) + sq(R.x.y)*log(Lambda.y);
-      
-      /**
-      We now compute the upper convective term $2 \mathbf{B} +
-      (\Omega \cdot \Psi -\Psi \cdot \Omega)$.
-	
-      The diagonalization will be applied to the velocity gradient
-      $(\nabla u)^T$ to obtain the antisymmetric tensor $\Omega$ and
-      the traceless, symmetric tensor, $\mathbf{B}$. If the conformation
-      tensor is $\mathbf{I}$, $\Omega = 0$ and $\mathbf{B}= \mathbf{D}$.  */
+      	Psi.x.x[] = sq(R.x.x)*log(Lambda.x) + sq(R.x.y)*log(Lambda.y);
+
+        /**
+        We now compute the upper convective term $2 \mathbf{B} +
+        (\Omega \cdot \Psi -\Psi \cdot \Omega)$.
+
+        The diagonalization will be applied to the velocity gradient
+        $(\nabla u)^T$ to obtain the antisymmetric tensor $\Omega$ and
+        the traceless, symmetric tensor, $\mathbf{B}$. If the conformation
+        tensor is $\mathbf{I}$, $\Omega = 0$ and $\mathbf{B}= \mathbf{D}$.  */
 
       pseudo_t B;
       double OM = 0.;
@@ -200,9 +236,9 @@ event tracer_advection (i++)
 	  B.x.x = M.x.x*sq(R.x.x)+M.y.y*sq(R.x.y);	
       }
 
-      /**
-      We now advance $\Psi$ in time, adding the upper convective
-      contribution. */
+        /**
+        We now advance $\Psi$ in time, adding the upper convective
+        contribution. */
 
       double s = - Psi.x.y[];
       Psi.x.y[] += dt*(2.*B.x.y + OM*(Psi.y.y[] - Psi.x.x[]));
@@ -226,7 +262,7 @@ event tracer_advection (i++)
 #endif
 
 }
-  
+
   /**
   ### Advection of $\Psi$
   
@@ -239,10 +275,10 @@ event tracer_advection (i++)
   advection ({Psi.x.x, Psi.x.y, Psi.y.y}, uf, dt);
 #endif
 
-  /**
-  ### Convert back to \tau_p */
-  
-  foreach() {    
+    /**
+    ### Convert back to \conform_p */
+
+    foreach() {
       /**
       It is time to undo the log-conformation, again by
       diagonalization, to recover the conformation tensor $\mathbf{A}$
@@ -261,18 +297,43 @@ event tracer_advection (i++)
 #endif
 
       /**
-      Then the stress tensor $\mathbf{\tau}_p^{n+1}$ is computed from
-      $\mathbf{A}^{n+1}$ according to the constitutive model,
-      $\mathbf{f}_s(\mathbf{A})$.  */
+      We perform now step (c) by integrating 
+      $\mathbf{A}_t = -\mathbf{f}_r (\mathbf{A})/\lambda$ to obtain
+      $\mathbf{A}^{n+1}$. This step is analytic,
+      $$
+      \int_{t^n}^{t^{n+1}}\frac{d \mathbf{A}}{\mathbf{I}- \mathbf{A}} = 
+      \frac{\Delta t}{\lambda}
+      $$
+      */
 
-      double fa = Gp[];
-      
-      tau_p.x.y[] = fa*A.x.y;
+     double intFactor = lambda[] != 0. ? exp(-dt/lambda[]): 0.;
+     
 #if AXI
-      tau_qq[] = fa*(Aqq - 1.);
+      Aqq = (1. - intFactor) + intFactor*exp(Psiqq[]);
 #endif
+
+      A.x.y *= intFactor;
       foreach_dimension()
-        tau_p.x.x[] = fa*(A.x.x - 1.);
+        A.x.x = (1. - intFactor) + A.x.x*intFactor;
+
+      /**
+        Then the Conformation tensor $\mathcal{A}_p^{n+1}$ is restored from
+        $\mathbf{A}^{n+1}$.  */
+      
+      double fa = (f[] < 1e-6 ? 0.0: 1.0);
+      
+      conform_p.x.y[] = fa*A.x.y;
+      tau_p.x.y[] = Gp[]*A.x.y;
+#if AXI
+      conform_qq[] = fa != 0.0 ? fa*(Aqq): 1.0;
+      tau_qq[] = Gp[]*(Aqq - 1.);
+#endif
+
+      foreach_dimension(){
+        conform_p.x.x[] = fa != 0.0 ? fa*(A.x.x): 1.0;
+        tau_p.x.x[] = Gp[]*(A.x.x - 1.);
+      }
+
   }
 }
 
