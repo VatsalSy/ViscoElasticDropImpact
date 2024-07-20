@@ -1,6 +1,9 @@
 intermediate*
 dump*
-
+log
+*/log
+bounceVE_WeissenbergSweep
+bounceVE
 # Prerequisites
 *.d
 
